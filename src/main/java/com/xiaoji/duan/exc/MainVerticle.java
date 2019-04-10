@@ -1,5 +1,8 @@
 package com.xiaoji.duan.exc;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import io.vertx.amqpbridge.AmqpBridge;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
@@ -50,12 +53,72 @@ public class MainVerticle extends AbstractVerticle {
 		consumer.handler(vertxMsg -> this.process(trigger, vertxMsg));
 	}
 	
-	private void process(String consumer, Message<JsonObject> received) {
-		System.out.println("Consumer " + consumer + " received [" + received.body().encode() + "]");
-		JsonObject data = received.body().getJsonObject("body");
+	public static void main(String[] args) {
+		String httpUrlAbs = "http://sa-aba:8080/aba/#{sd}/user/#{sd}/#{openid}";
+		String regex = "\\#\\{([^}]+)\\}";
+        Pattern pattern = Pattern.compile (regex);
+        Matcher matcher = pattern.matcher(httpUrlAbs);
+        JsonObject params = new JsonObject().put("sd", "sd");
+        while (matcher.find())
+        {
+        	String mark = matcher.group();
+            String key = mark.substring(2, mark.length() - 1);
+            System.out.println(mark + " - " + key);
+            
+            String paramVal = params.getString(key, "");
+            httpUrlAbs = httpUrlAbs.replace(mark, paramVal);
+        }
+        
+        System.out.println(httpUrlAbs);
+	}
 
-		String httpMethod = data.getJsonObject("context").getString("method", "get");
-		String httpUrlAbs = data.getJsonObject("context").getString("urlabs", "");
+	public static String getShortContent(String origin) {
+		return origin.length() > 512 ? origin.substring(0, 512) : origin;
+	}
+	
+	private void process(String consumer, Message<JsonObject> received) {
+		System.out.println("Consumer " + consumer + " received [" + getShortContent(received.body().encode()) + "]");
+		JsonObject data = received.body().getJsonObject("body", new JsonObject());
+
+		String httpMethod = data.getJsonObject("context", new JsonObject()).getString("method", "get");
+		String httpUrlAbs = data.getJsonObject("context", new JsonObject()).getString("urlabs", "");
+		
+		if (!(data.getJsonObject("context", new JsonObject()).getValue("params") instanceof JsonObject)) {
+			System.out.println("Wrong parameters exit.");
+			return;
+		}
+		
+		JsonObject params = data.getJsonObject("context", new JsonObject()).getJsonObject("params", new JsonObject());
+		
+		if (params == null || httpUrlAbs == null || "".equals(httpUrlAbs)) {
+			System.out.println("Wrong parameters exit.");
+			return;
+		}
+
+		if (httpUrlAbs.contains("#")) {
+            System.out.println("Replace before " + httpUrlAbs);
+
+            String regex = "\\#\\{([^}]+)\\}";
+            Pattern pattern = Pattern.compile (regex);
+            Matcher matcher = pattern.matcher(httpUrlAbs);
+            while (matcher.find())
+            {
+            	String mark = matcher.group();
+                String key = mark.substring(2, mark.length() - 1);
+                System.out.println(mark + " - " + key);
+
+                String paramVal = "";
+                if (params.getValue(key) instanceof String) {
+                    paramVal = params.getString(key, "");
+                } else {
+                    paramVal = params.getValue(key, new String("")).toString();
+                }
+                
+                httpUrlAbs = httpUrlAbs.replace(mark, paramVal);
+            }
+
+            System.out.println("Replace after " + httpUrlAbs);
+		}
 		JsonObject httpData = data.getJsonObject("context").getJsonObject("data", new JsonObject());
 
 		String next = data.getJsonObject("context").getString("next");
