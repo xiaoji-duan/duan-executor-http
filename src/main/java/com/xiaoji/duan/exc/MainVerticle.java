@@ -1,5 +1,8 @@
 package com.xiaoji.duan.exc;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.Charset;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -82,20 +85,21 @@ public class MainVerticle extends AbstractVerticle {
 
 		String httpMethod = data.getJsonObject("context", new JsonObject()).getString("method", "get");
 		String httpUrlAbs = data.getJsonObject("context", new JsonObject()).getString("urlabs", "");
+		String charset = data.getJsonObject("context", new JsonObject()).getString("charset", "");
 		
-		if (!(data.getJsonObject("context", new JsonObject()).getValue("params") instanceof JsonObject)) {
-			System.out.println("Wrong parameters exit.");
-			return;
-		}
-		
-		JsonObject params = data.getJsonObject("context", new JsonObject()).getJsonObject("params", new JsonObject());
-		
-		if (params == null || httpUrlAbs == null || "".equals(httpUrlAbs)) {
-			System.out.println("Wrong parameters exit.");
-			return;
-		}
-
 		if (httpUrlAbs.contains("#")) {
+			if (!(data.getJsonObject("context", new JsonObject()).getValue("params") instanceof JsonObject)) {
+				System.out.println("Wrong parameters exit.");
+				return;
+			}
+			
+			JsonObject params = data.getJsonObject("context", new JsonObject()).getJsonObject("params", new JsonObject());
+			
+			if (params == null || httpUrlAbs == null || "".equals(httpUrlAbs)) {
+				System.out.println("Wrong parameters exit.");
+				return;
+			}
+
             System.out.println("Replace before " + httpUrlAbs);
 
             String regex = "\\#\\{([^}]+)\\}";
@@ -126,11 +130,11 @@ public class MainVerticle extends AbstractVerticle {
 		Future<JsonObject> future = Future.future();
 		
 		if ("get".equals(httpMethod.toLowerCase())) {
-			get(future, httpUrlAbs, httpData);
+			get(future, httpUrlAbs, charset, httpData);
 		}
 		
 		if ("post".equals(httpMethod.toLowerCase())) {
-			post(future, httpUrlAbs, httpData);
+			post(future, httpUrlAbs, charset, httpData);
 		}
 		
 		future.setHandler(handler -> {
@@ -154,13 +158,22 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 	
-	private void get(Future<JsonObject> future, String url, JsonObject data) {
+	private void get(Future<JsonObject> future, String url, String charset, JsonObject data) {
 		client.getAbs(url).sendJsonObject(data, handler -> {
 			if (handler.succeeded()) {
 				HttpResponse<Buffer> result = handler.result();
 				
 				if (result != null) {
-					String resp = result.bodyAsString();
+					String resp = "";
+					
+					if ("".equals(charset)) {
+						resp = result.bodyAsString();
+					} else {
+						Charset origin = Charset.forName(charset);
+						CharBuffer cb = origin.decode(ByteBuffer.wrap(result.bodyAsBuffer().getBytes()));
+						Charset utf8 = Charset.forName("UTF-8");
+						resp = utf8.encode(cb).toString();
+					}
 					
 					if (resp.startsWith("{") && resp.endsWith("}")) {
 						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonObject").put("response", new JsonObject(resp)));
@@ -178,13 +191,22 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 
-	private void post(Future<JsonObject> future, String url, JsonObject data) {
+	private void post(Future<JsonObject> future, String url, String charset, JsonObject data) {
 		client.postAbs(url).sendJsonObject(data, handler -> {
 			if (handler.succeeded()) {
 				HttpResponse<Buffer> result = handler.result();
 				
 				if (result != null) {
-					String resp = result.bodyAsString();
+					String resp = "";
+					
+					if ("".equals(charset)) {
+						resp = result.bodyAsString();
+					} else {
+						Charset origin = Charset.forName(charset);
+						CharBuffer cb = origin.decode(ByteBuffer.wrap(result.bodyAsBuffer().getBytes()));
+						Charset utf8 = Charset.forName("UTF-8");
+						resp = utf8.encode(cb).toString();
+					}
 					
 					if (resp.startsWith("{") && resp.endsWith("}")) {
 						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonObject").put("response", new JsonObject(resp)));
