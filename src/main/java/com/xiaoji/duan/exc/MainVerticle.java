@@ -149,7 +149,7 @@ public class MainVerticle extends AbstractVerticle {
 			} else {
 				JsonObject nextctx = new JsonObject()
 						.put("context", new JsonObject()
-								.put("executed", new JsonObject()));
+								.put("executed", new JsonObject().put("cause", handler.cause().getMessage())));
 				
 				MessageProducer<JsonObject> producer = bridge.createProducer(next);
 				producer.send(new JsonObject().put("body", nextctx));
@@ -189,6 +189,7 @@ public class MainVerticle extends AbstractVerticle {
 						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "Plain").put("response", resp));
 					}
 				} else {
+					System.out.println("Response body is empty.");
 					future.complete(new JsonObject());
 				}
 			} else {
