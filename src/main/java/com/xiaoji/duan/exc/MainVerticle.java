@@ -169,10 +169,16 @@ public class MainVerticle extends AbstractVerticle {
 					if ("".equals(charset)) {
 						resp = result.bodyAsString();
 					} else {
-						Charset origin = Charset.forName(charset);
-						CharBuffer cb = origin.decode(ByteBuffer.wrap(result.bodyAsBuffer().getBytes()));
-						Charset utf8 = Charset.forName("UTF-8");
-						resp = utf8.encode(cb).toString();
+						try {
+							resp = new String(result.bodyAsBuffer().getBytes(), charset);
+						} catch (Exception e) {
+							e.printStackTrace();
+							resp = e.getMessage();
+						} finally {
+							if (resp == null) {
+								resp = "";
+							}
+						}
 					}
 					
 					if (resp.startsWith("{") && resp.endsWith("}")) {
@@ -202,10 +208,16 @@ public class MainVerticle extends AbstractVerticle {
 					if ("".equals(charset)) {
 						resp = result.bodyAsString();
 					} else {
-						Charset origin = Charset.forName(charset);
-						CharBuffer cb = origin.decode(ByteBuffer.wrap(result.bodyAsBuffer().getBytes()));
-						Charset utf8 = Charset.forName("UTF-8");
-						resp = utf8.encode(cb).toString();
+						try {
+							resp = new String(result.bodyAsBuffer().getBytes(), charset);
+						} catch (Exception e) {
+							e.printStackTrace();
+							resp = e.getMessage();
+						} finally {
+							if (resp == null) {
+								resp = "";
+							}
+						}
 					}
 					
 					if (resp.startsWith("{") && resp.endsWith("}")) {
