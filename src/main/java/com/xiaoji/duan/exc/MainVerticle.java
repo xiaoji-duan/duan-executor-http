@@ -1,12 +1,10 @@
 package com.xiaoji.duan.exc;
 
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.Charset;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.vertx.amqpbridge.AmqpBridge;
+import io.vertx.amqpbridge.AmqpBridgeOptions;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -15,6 +13,7 @@ import io.vertx.core.eventbus.MessageConsumer;
 import io.vertx.core.eventbus.MessageProducer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 
@@ -22,6 +21,7 @@ public class MainVerticle extends AbstractVerticle {
 
 	private WebClient client = null;
 	private AmqpBridge bridge = null;
+	private AmqpBridge remote = null;
 
 	@Override
 	public void start(Future<Void> startFuture) throws Exception {
@@ -35,19 +35,37 @@ public class MainVerticle extends AbstractVerticle {
 		});
 		connectStompServer();
 
+		AmqpBridgeOptions remoteOption = new AmqpBridgeOptions();
+		remoteOption.setReconnectAttempts(60);			// 重新连接尝试60次
+		remoteOption.setReconnectInterval(60 * 1000);	// 每次尝试间隔1分钟
+		
+		remote = AmqpBridge.create(vertx, remoteOption);
+		
+		connectRemoteServer();
 	}
 
+	private void connectRemoteServer() {
+		remote.start(config().getString("remote.server.host", "sa-amq"),
+			config().getInteger("remote.server.port", 5672), res -> {
+				if (res.failed()) {
+//						res.cause().printStackTrace();
+					connectRemoteServer();
+				} else {
+			        System.out.println("Remote amqp server connected.");
+				}
+			});
+	}
+	
 	private void connectStompServer() {
 		bridge.start(config().getString("stomp.server.host", "sa-amq"),
-				config().getInteger("stomp.server.port", 5672), res -> {
-					if (res.failed()) {
-						res.cause().printStackTrace();
-						connectStompServer();
-					} else {
-						subscribeTrigger(config().getString("amq.app.id", "exc"));
-					}
-				});
-		
+			config().getInteger("stomp.server.port", 5672), res -> {
+				if (res.failed()) {
+					res.cause().printStackTrace();
+					connectStompServer();
+				} else {
+					subscribeTrigger(config().getString("amq.app.id", "exc"));
+				}
+			});
 	}
 	
 	private void subscribeTrigger(String trigger) {
@@ -83,10 +101,12 @@ public class MainVerticle extends AbstractVerticle {
 		System.out.println("Consumer " + consumer + " received [" + getShortContent(received.body().encode()) + "]");
 		JsonObject data = received.body().getJsonObject("body", new JsonObject());
 
+		JsonArray callback = data.getJsonObject("context", new JsonObject()).getJsonArray("callback", new JsonArray());
 		String httpMethod = data.getJsonObject("context", new JsonObject()).getString("method", "get");
 		String httpUrlAbs = data.getJsonObject("context", new JsonObject()).getString("urlabs", "");
 		String charset = data.getJsonObject("context", new JsonObject()).getString("charset", "");
-		
+		JsonObject header = data.getJsonObject("context", new JsonObject()).getJsonObject("header", new JsonObject());
+
 		if (httpUrlAbs.contains("#")) {
 			if (!(data.getJsonObject("context", new JsonObject()).getValue("params") instanceof JsonObject)) {
 				System.out.println("Wrong parameters exit.");
@@ -134,7 +154,7 @@ public class MainVerticle extends AbstractVerticle {
 		}
 		
 		if ("post".equals(httpMethod.toLowerCase())) {
-			post(future, httpUrlAbs, charset, httpData);
+			post(future, httpUrlAbs, charset, header, httpData);
 		}
 		
 		future.setHandler(handler -> {
@@ -148,6 +168,16 @@ public class MainVerticle extends AbstractVerticle {
 				producer.end();
 
 				System.out.println("Consumer " + consumer + " send to [" + next + "] result [" + nextctx.encode() + "]");
+				
+				if (callback.size() > 0) {
+					for (int i = 0; i < callback.size(); i++) {
+						String onecallback = callback.getString(i);
+						
+						MessageProducer<JsonObject> callbackproducer = remote.createProducer(onecallback);
+						callbackproducer.send(new JsonObject().put("body", nextctx));
+						callbackproducer.end();
+					}
+				}
 			} else {
 				JsonObject nextctx = new JsonObject()
 						.put("context", new JsonObject()
@@ -158,6 +188,16 @@ public class MainVerticle extends AbstractVerticle {
 				producer.end();
 
 				System.out.println("Consumer " + consumer + " send to [" + next + "] result [" + nextctx.encode() + "]");
+
+				if (callback.size() > 0) {
+					for (int i = 0; i < callback.size(); i++) {
+						String onecallback = callback.getString(i);
+						
+						MessageProducer<JsonObject> callbackproducer = remote.createProducer(onecallback);
+						callbackproducer.send(new JsonObject().put("body", nextctx));
+						callbackproducer.end();
+					}
+				}
 			}
 		});
 	}
@@ -202,8 +242,16 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 
-	private void post(Future<JsonObject> future, String url, String charset, JsonObject data) {
-		client.postAbs(url).sendJsonObject(data, handler -> {
+	private void post(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject data) {
+		HttpRequest<Buffer> request = client.postAbs(url);
+		
+		if (!header.isEmpty()) {
+			for (String field : header.fieldNames()) {
+				request.putHeader(field, header.getString(field, ""));
+			}
+		}
+		
+		request.sendJsonObject(data, handler -> {
 			if (handler.succeeded()) {
 				HttpResponse<Buffer> result = handler.result();
 				
