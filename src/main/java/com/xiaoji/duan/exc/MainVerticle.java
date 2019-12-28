@@ -76,10 +76,10 @@ public class MainVerticle extends AbstractVerticle {
 	
 	public static void main(String[] args) {
 		String httpUrlAbs = "http://sa-aba:8080/aba/#{sd}/user/#{sd}/#{openid}";
-		String regex = "\\#\\{([^}]+)\\}";
+        String regex = "\\#\\{([^\\/^}]+)\\}";
         Pattern pattern = Pattern.compile (regex);
         Matcher matcher = pattern.matcher(httpUrlAbs);
-        JsonObject params = new JsonObject().put("sd", "sd");
+        JsonObject params = new JsonObject().put("sd", "sd").put("openid", "openid");
         while (matcher.find())
         {
         	String mark = matcher.group();
@@ -103,6 +103,7 @@ public class MainVerticle extends AbstractVerticle {
 
 		JsonArray callback = data.getJsonObject("context", new JsonObject()).getJsonArray("callback", new JsonArray());
 		String httpMethod = data.getJsonObject("context", new JsonObject()).getString("method", "get");
+		JsonObject querys = data.getJsonObject("context", new JsonObject()).getJsonObject("querys", new JsonObject());
 		String httpUrlAbs = data.getJsonObject("context", new JsonObject()).getString("urlabs", "");
 		String charset = data.getJsonObject("context", new JsonObject()).getString("charset", "");
 		JsonObject header = data.getJsonObject("context", new JsonObject()).getJsonObject("header", new JsonObject());
@@ -122,7 +123,7 @@ public class MainVerticle extends AbstractVerticle {
 
             System.out.println("Replace before " + httpUrlAbs);
 
-            String regex = "\\#\\{([^}]+)\\}";
+            String regex = "\\#\\{([^\\/^}]+)\\}";
             Pattern pattern = Pattern.compile (regex);
             Matcher matcher = pattern.matcher(httpUrlAbs);
             while (matcher.find())
@@ -150,11 +151,15 @@ public class MainVerticle extends AbstractVerticle {
 		Future<JsonObject> future = Future.future();
 		
 		if ("get".equals(httpMethod.toLowerCase())) {
-			get(future, httpUrlAbs, charset, httpData);
+			get(future, httpUrlAbs, charset, header, querys, httpData);
+		}
+		
+		if ("put".equals(httpMethod.toLowerCase())) {
+			put(future, httpUrlAbs, charset, header, querys, httpData);
 		}
 		
 		if ("post".equals(httpMethod.toLowerCase())) {
-			post(future, httpUrlAbs, charset, header, httpData);
+			post(future, httpUrlAbs, charset, header, querys, httpData);
 		}
 		
 		future.setHandler(handler -> {
@@ -202,8 +207,77 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 	
-	private void get(Future<JsonObject> future, String url, String charset, JsonObject data) {
-		client.getAbs(url).sendJsonObject(data, handler -> {
+	private void put(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data) {
+		System.out.println("Launch url(put) : " + url);
+		HttpRequest<Buffer> request = client.putAbs(url);
+		
+		if (!header.isEmpty()) {
+			for (String field : header.fieldNames()) {
+				request.putHeader(field, header.getString(field, ""));
+			}
+		}
+		
+		if (!querys.isEmpty()) {
+			for (String field : querys.fieldNames()) {
+				request.addQueryParam(field, querys.getString(field, ""));
+			}
+		}
+		
+		request.sendJsonObject(data, handler -> {
+			if (handler.succeeded()) {
+				HttpResponse<Buffer> result = handler.result();
+				
+				if (result != null) {
+					String resp = "";
+					
+					if ("".equals(charset)) {
+						resp = result.bodyAsString();
+					} else {
+						try {
+							resp = new String(result.bodyAsBuffer().getBytes(), charset);
+						} catch (Exception e) {
+							e.printStackTrace();
+							resp = e.getMessage();
+						} finally {
+							if (resp == null) {
+								resp = "";
+							}
+						}
+					}
+					
+					if (resp.startsWith("{") && resp.endsWith("}")) {
+						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonObject").put("response", new JsonObject(resp)));
+					} else if (resp.startsWith("[") && resp.endsWith("]")) {
+						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonArray").put("response", new JsonArray(resp)));
+					} else {
+						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "Plain").put("response", resp));
+					}
+				} else {
+					future.complete(new JsonObject());
+				}
+			} else {
+				future.fail(handler.cause());
+			}
+		});
+	}
+	
+	private void get(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data) {
+		System.out.println("Launch url(get) : " + url);
+		HttpRequest<Buffer> request = client.getAbs(url);
+		
+		if (!header.isEmpty()) {
+			for (String field : header.fieldNames()) {
+				request.putHeader(field, header.getString(field, ""));
+			}
+		}
+		
+		if (!querys.isEmpty()) {
+			for (String field : querys.fieldNames()) {
+				request.addQueryParam(field, querys.getString(field, ""));
+			}
+		}
+		
+		request.sendJsonObject(data, handler -> {
 			if (handler.succeeded()) {
 				HttpResponse<Buffer> result = handler.result();
 				
@@ -242,12 +316,19 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 
-	private void post(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject data) {
+	private void post(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data) {
+		System.out.println("Launch url(post) : " + url);
 		HttpRequest<Buffer> request = client.postAbs(url);
 		
 		if (!header.isEmpty()) {
 			for (String field : header.fieldNames()) {
 				request.putHeader(field, header.getString(field, ""));
+			}
+		}
+		
+		if (!querys.isEmpty()) {
+			for (String field : querys.fieldNames()) {
+				request.addQueryParam(field, querys.getString(field, ""));
 			}
 		}
 		
