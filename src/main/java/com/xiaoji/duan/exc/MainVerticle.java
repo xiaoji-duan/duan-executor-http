@@ -1,5 +1,6 @@
 package com.xiaoji.duan.exc;
 
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -16,6 +17,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.multipart.MultipartForm;
 
 public class MainVerticle extends AbstractVerticle {
 
@@ -26,6 +28,12 @@ public class MainVerticle extends AbstractVerticle {
 	@Override
 	public void start(Future<Void> startFuture) throws Exception {
 
+		String cachedir = config().getString("cache.dir", "/opt/duan/exc/caches");
+
+		if (!vertx.fileSystem().existsBlocking(cachedir)) {
+			vertx.fileSystem().mkdirsBlocking(cachedir);
+		}
+		
 		client = WebClient.create(vertx);
 
 		bridge = AmqpBridge.create(vertx);
@@ -106,6 +114,7 @@ public class MainVerticle extends AbstractVerticle {
 		JsonObject querys = data.getJsonObject("context", new JsonObject()).getJsonObject("querys", new JsonObject());
 		String httpUrlAbs = data.getJsonObject("context", new JsonObject()).getString("urlabs", "");
 		String charset = data.getJsonObject("context", new JsonObject()).getString("charset", "");
+		String bridgeType = data.getJsonObject("context", new JsonObject()).getString("bridge", "");
 		JsonObject header = data.getJsonObject("context", new JsonObject()).getJsonObject("header", new JsonObject());
 
 		if (httpUrlAbs.contains("#")) {
@@ -150,8 +159,14 @@ public class MainVerticle extends AbstractVerticle {
 		
 		Future<JsonObject> future = Future.future();
 		
+		System.out.println(httpMethod + ", " + bridgeType);
+		
 		if ("get".equals(httpMethod.toLowerCase())) {
-			get(future, httpUrlAbs, charset, header, querys, httpData);
+			if ("binary".equals(bridgeType)) {
+				getbinary(future, httpUrlAbs, charset, header, querys, httpData);
+			} else {
+				get(future, httpUrlAbs, charset, header, querys, httpData);
+			}
 		}
 		
 		if ("put".equals(httpMethod.toLowerCase())) {
@@ -316,6 +331,98 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 
+	/**
+	 * 
+	 * 获取数据后上传指定服务
+	 * 
+	 * @param future
+	 * @param url
+	 * @param charset
+	 * @param header
+	 * @param querys
+	 * @param data
+	 */
+	private void getbinary(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data) {
+		System.out.println("Launch url(getbinary) : " + url);
+		HttpRequest<Buffer> request = client.getAbs(url);
+		
+		if (header != null && !header.isEmpty()) {
+			for (String field : header.fieldNames()) {
+				request.putHeader(field, header.getString(field, ""));
+			}
+		}
+		
+		if (querys != null && !querys.isEmpty()) {
+			for (String field : querys.fieldNames()) {
+				request.addQueryParam(field, querys.getString(field, ""));
+			}
+		}
+		
+		StringBuffer nextpath = new StringBuffer();
+		
+		if (data != null && !data.isEmpty()) {
+			nextpath.append(data.getString("path", ""));
+		}
+		
+		System.out.println("nextpath : " + nextpath);
+		request.sendJsonObject(new JsonObject(), handler -> {
+			if (handler.succeeded()) {
+				HttpResponse<Buffer> result = handler.result();
+				
+				if (result != null) {
+					System.out.println(result.headers().toString());
+
+					String contentType = result.getHeader("Content-Type");
+					String filedisp = result.getHeader("Content-Disposition");
+					
+					String extension = "";
+					String cachedir = config().getString("cache.dir", "/opt/duan/exc/caches");
+					StringBuffer filename = new StringBuffer();
+					
+//					if (contentType != null && !"".equals(contentType) && contentType.contains("/")) {
+//						extension = contentType.substring(contentType.lastIndexOf("/") + 1).toLowerCase();
+//						filename.append(UUID.randomUUID().toString() + "." + extension);
+//					} else {
+//						filename.append(UUID.randomUUID().toString());
+//					}
+					filename.append(UUID.randomUUID().toString());
+
+					System.out.println(contentType);
+					System.out.println(filename);
+					
+					vertx.fileSystem().writeFile(cachedir + "/" + filename.toString(), result.body(), writeFile -> {
+						if (writeFile.succeeded()) {
+							// 接收到的数据上传到指定服务
+							HttpRequest<Buffer> push = client.postAbs(nextpath.toString());
+
+							MultipartForm form = MultipartForm.create()
+									.attribute("saPrefix", "exc")
+									.attribute("group", "pluto")
+									.attribute("username", "group")
+									.binaryFileUpload("file", filename.toString(), cachedir + "/" + filename.toString(), contentType);
+							
+							push.sendMultipartForm(form, upload -> {
+								if (upload.succeeded()) {
+									future.complete(new JsonObject());
+								} else {
+									future.fail(upload.cause());
+								}
+							});
+						} else {
+							future.fail(writeFile.cause());
+						}
+					});
+				} else {
+					System.out.println("Response body is empty.");
+					future.complete(new JsonObject());
+				}
+			} else {
+				System.out.println(handler.cause().getMessage());
+				future.fail(handler.cause());
+			}
+		});
+	}
+	
 	private void post(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data) {
 		System.out.println("Launch url(post) : " + url);
 		HttpRequest<Buffer> request = client.postAbs(url);
