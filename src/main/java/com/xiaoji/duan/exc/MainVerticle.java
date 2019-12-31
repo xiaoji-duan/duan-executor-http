@@ -1,5 +1,6 @@
 package com.xiaoji.duan.exc;
 
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -14,6 +15,7 @@ import io.vertx.core.eventbus.MessageConsumer;
 import io.vertx.core.eventbus.MessageProducer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.MultiMap;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
@@ -115,6 +117,7 @@ public class MainVerticle extends AbstractVerticle {
 		String httpUrlAbs = data.getJsonObject("context", new JsonObject()).getString("urlabs", "");
 		String charset = data.getJsonObject("context", new JsonObject()).getString("charset", "");
 		String bridgeType = data.getJsonObject("context", new JsonObject()).getString("bridge", "");
+		Boolean isform = data.getJsonObject("context", new JsonObject()).getBoolean("isform", Boolean.FALSE);
 		JsonObject header = data.getJsonObject("context", new JsonObject()).getJsonObject("header", new JsonObject());
 
 		if (httpUrlAbs.contains("#")) {
@@ -174,7 +177,7 @@ public class MainVerticle extends AbstractVerticle {
 		}
 		
 		if ("post".equals(httpMethod.toLowerCase())) {
-			post(future, httpUrlAbs, charset, header, querys, httpData);
+			post(future, httpUrlAbs, charset, header, querys, httpData, isform);
 		}
 		
 		future.setHandler(handler -> {
@@ -237,7 +240,7 @@ public class MainVerticle extends AbstractVerticle {
 				request.addQueryParam(field, querys.getString(field, ""));
 			}
 		}
-		
+
 		request.sendJsonObject(data, handler -> {
 			if (handler.succeeded()) {
 				HttpResponse<Buffer> result = handler.result();
@@ -423,7 +426,7 @@ public class MainVerticle extends AbstractVerticle {
 		});
 	}
 	
-	private void post(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data) {
+	private void post(Future<JsonObject> future, String url, String charset, JsonObject header, JsonObject querys, JsonObject data, Boolean isform) {
 		System.out.println("Launch url(post) : " + url);
 		HttpRequest<Buffer> request = client.postAbs(url);
 		
@@ -439,41 +442,86 @@ public class MainVerticle extends AbstractVerticle {
 			}
 		}
 		
-		request.sendJsonObject(data, handler -> {
-			if (handler.succeeded()) {
-				HttpResponse<Buffer> result = handler.result();
-				
-				if (result != null) {
-					String resp = "";
+		if (isform) {
+			MultiMap form = MultiMap.caseInsensitiveMultiMap();
+			
+			Map formap = data.mapTo(Map.class);
+			form.addAll(formap);
+			
+			request.sendForm(form, handler -> {
+				if (handler.succeeded()) {
+					HttpResponse<Buffer> result = handler.result();
 					
-					if ("".equals(charset)) {
-						resp = result.bodyAsString();
-					} else {
-						try {
-							resp = new String(result.bodyAsBuffer().getBytes(), charset);
-						} catch (Exception e) {
-							e.printStackTrace();
-							resp = e.getMessage();
-						} finally {
-							if (resp == null) {
-								resp = "";
+					if (result != null) {
+						String resp = "";
+						
+						if ("".equals(charset)) {
+							resp = result.bodyAsString();
+						} else {
+							try {
+								resp = new String(result.bodyAsBuffer().getBytes(), charset);
+							} catch (Exception e) {
+								e.printStackTrace();
+								resp = e.getMessage();
+							} finally {
+								if (resp == null) {
+									resp = "";
+								}
 							}
 						}
-					}
-					
-					if (resp.startsWith("{") && resp.endsWith("}")) {
-						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonObject").put("response", new JsonObject(resp)));
-					} else if (resp.startsWith("[") && resp.endsWith("]")) {
-						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonArray").put("response", new JsonArray(resp)));
+						
+						if (resp.startsWith("{") && resp.endsWith("}")) {
+							future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonObject").put("response", new JsonObject(resp)));
+						} else if (resp.startsWith("[") && resp.endsWith("]")) {
+							future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonArray").put("response", new JsonArray(resp)));
+						} else {
+							future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "Plain").put("response", resp));
+						}
 					} else {
-						future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "Plain").put("response", resp));
+						future.complete(new JsonObject());
 					}
 				} else {
-					future.complete(new JsonObject());
+					future.fail(handler.cause());
 				}
-			} else {
-				future.fail(handler.cause());
-			}
-		});
+			});
+		} else {
+			request.sendJsonObject(data, handler -> {
+				if (handler.succeeded()) {
+					HttpResponse<Buffer> result = handler.result();
+					
+					if (result != null) {
+						String resp = "";
+						
+						if ("".equals(charset)) {
+							resp = result.bodyAsString();
+						} else {
+							try {
+								resp = new String(result.bodyAsBuffer().getBytes(), charset);
+							} catch (Exception e) {
+								e.printStackTrace();
+								resp = e.getMessage();
+							} finally {
+								if (resp == null) {
+									resp = "";
+								}
+							}
+						}
+						
+						if (resp.startsWith("{") && resp.endsWith("}")) {
+							future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonObject").put("response", new JsonObject(resp)));
+						} else if (resp.startsWith("[") && resp.endsWith("]")) {
+							future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "JsonArray").put("response", new JsonArray(resp)));
+						} else {
+							future.complete(new JsonObject().put("Content-Type", result.getHeader("Content-Type")).put("type", "Plain").put("response", resp));
+						}
+					} else {
+						future.complete(new JsonObject());
+					}
+				} else {
+					future.fail(handler.cause());
+				}
+			});
+		}
+
 	}
 }
