@@ -1,6 +1,7 @@
 package com.xiaoji.duan.exc;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -120,6 +121,19 @@ public class MainVerticle extends AbstractVerticle {
 		Boolean isform = data.getJsonObject("context", new JsonObject()).getBoolean("isform", Boolean.FALSE);
 		JsonObject header = data.getJsonObject("context", new JsonObject()).getJsonObject("header", new JsonObject());
 
+		// 查找是否有合并参数 merge_XXXX
+		JsonObject merged = new JsonObject();
+		Set<String> keys = data.getJsonObject("context").fieldNames();
+		
+		for (String key : keys) {
+			if (key.startsWith("merge_")) {
+				String variable = key.replace("merge_", "");
+				Object value = data.getJsonObject("context").getValue(key);
+				
+				merged.put(variable, value);
+			}
+		}
+		
 		if (httpUrlAbs.contains("#")) {
 			if (!(data.getJsonObject("context", new JsonObject()).getValue("params") instanceof JsonObject)) {
 				System.out.println("Wrong parameters exit.");
@@ -158,6 +172,10 @@ public class MainVerticle extends AbstractVerticle {
 		}
 		JsonObject httpData = data.getJsonObject("context").getJsonObject("data", new JsonObject());
 
+		if (!merged.isEmpty()) {
+			httpData.mergeIn(merged);
+		}
+		
 		String next = data.getJsonObject("context").getString("next");
 		
 		Future<JsonObject> future = Future.future();
