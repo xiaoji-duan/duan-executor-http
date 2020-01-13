@@ -536,6 +536,7 @@ public class MainVerticle extends AbstractVerticle {
 						future.complete(new JsonObject());
 					}
 				} else {
+					System.out.println(handler.cause().getMessage());
 					future.fail(handler.cause());
 				}
 			});
